@@ -1,24 +1,34 @@
 import axios from "axios";
 import React from "react";
+import { useContext } from "react";
+import { UserContext } from "./UserContext.jsx";
 
-const Register = () => {
+function Register() {
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const { setUsername: setLoggedInUserName, setId } = useContext(UserContext);
 
-  function register(event) {
+  async function register(event) {
     event.preventDefault();
-    axios.post("/register", { username, password });
+    const { data } = axios
+      .post("/register", { username, password })
+      .then((res) => {
+        setLoggedInUserName(username);
+        setId(res.data.id);
+      })
+      .catch((err) => {
+        console.log(err);
+      });
   }
 
   return (
     <div className="bg-blue-50 h-screen flex items-center">
-      <form action="" className="w-64 mx-auto mb-12" onSubmit={register}>
+      <form className="w-64 mx-auto mb-12" onSubmit={register}>
         <input
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           type="text"
-          name=""
-          id=""
+          id="usernameinput"
           placeholder="username"
           className="block w-full rounded-sm p-2 mb-2 border"
         />
@@ -26,8 +36,7 @@ const Register = () => {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           type="password"
-          name=""
-          id=""
+          id="passwordinput"
           placeholder="password"
           className="block w-full rounded-sm p-2 mb-2 border"
         />
@@ -40,6 +49,6 @@ const Register = () => {
       </form>
     </div>
   );
-};
+}
 
 export default Register;
