@@ -1,2 +1,2 @@
 # chat FullStack Application
-Chat application full stack using React, Mongoose, Node
+Chat application full stack using React, Mongoose, Node, Tailwind
