@@ -1,6 +1,6 @@
 import React from "react";
 import { useContext } from "react";
-import Register from "./Register";
+import Register from "./RegisterAndLogin";
 import { UserContext } from "./UserContext";
 
 const Routes = () => {
