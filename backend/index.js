@@ -35,6 +35,13 @@ app.use(
   })
 );
 
+function cookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+  return isProd
+    ? { httpOnly: true, sameSite: "none", secure: true, path: "/" }
+    : { httpOnly: true, sameSite: "lax", secure: false, path: "/" };
+}
+
 async function getUserDataFromRequest(req) {
   return new Promise((resolve, reject) => {
     const token = req.cookies?.token;
@@ -80,7 +87,7 @@ app.post("/login", async (req, res) => {
       (err, token) => {
         if (err) return res.status(500).json({ error: "token sign failed" });
         res
-          .cookie("token", token, { sameSite: "none", secure: true })
+          .cookie("token", token, cookieOptions())
           .json({ id: foundUser._id });
       }
     );
@@ -107,7 +114,7 @@ app.post("/register", async (req, res) => {
       (err, token) => {
         if (err) return res.status(500).json({ error: "token sign failed" });
         res
-          .cookie("token", token, { sameSite: "none", secure: true })
+          .cookie("token", token, cookieOptions())
           .status(201)
           .json({ id: createdUser._id });
       }
@@ -118,6 +125,12 @@ app.post("/register", async (req, res) => {
     }
     res.status(500).json({ error: "registration failed" });
   }
+});
+
+app.post("/logout", (req, res) => {
+  res
+    .cookie("token", "", { ...cookieOptions(), maxAge: 0 })
+    .json({ ok: true });
 });
 
 app.get("/people", async (req, res) => {
@@ -145,6 +158,20 @@ const server = app.listen(process.env.PORT || 4000);
 /* -------------------------------- websockets -------------------------------- */
 
 const wss = new ws.WebSocketServer({ server });
+
+function broadcastOnline() {
+  const openClients = [...wss.clients].filter((c) => c.readyState === 1);
+  const onlineList = openClients
+    .filter((c) => c.userId)
+    .map((c) => ({ userId: c.userId, username: c.username }));
+  const payload = JSON.stringify({ online: onlineList });
+  openClients.forEach((c) => {
+    try {
+      c.send(payload);
+    } catch (e) {}
+  });
+}
+
 wss.on("connection", (connection, req) => {
   const cookies = req.headers.cookie;
   if (cookies) {
@@ -174,30 +201,28 @@ wss.on("connection", (connection, req) => {
         text,
       });
       [...wss.clients]
+        .filter((c) => c.readyState === 1)
         .filter((c) => c.userId === recipient || c.userId === connection.userId)
-        .forEach((c) =>
-          c.send(
-            JSON.stringify({
-              text,
-              sender: connection.userId,
-              recipient,
-              _id: messageDoc._id,
-            })
-          )
-        );
+        .forEach((c) => {
+          try {
+            c.send(
+              JSON.stringify({
+                text,
+                sender: connection.userId,
+                recipient,
+                _id: messageDoc._id,
+              })
+            );
+          } catch (e) {}
+        });
     } catch (e) {
       console.error("ws message error", e);
     }
   });
 
-  [...wss.clients].forEach((client) => {
-    client.send(
-      JSON.stringify({
-        online: [...wss.clients].map((c) => ({
-          userId: c.userId,
-          username: c.username,
-        })),
-      })
-    );
+  connection.on("close", () => {
+    broadcastOnline();
   });
+
+  broadcastOnline();
 });

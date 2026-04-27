@@ -1,6 +1,6 @@
 import { useEffect, useState, useContext, useRef } from "react";
 import axios from "axios";
-import { BsSendFill } from "react-icons/bs";
+import { BsArrowRight, BsBoxArrowRight } from "react-icons/bs";
 import Logo from "./Logo";
 import Avatar from "./avatar";
 import { UserContext } from "./UserContext";
@@ -10,7 +10,16 @@ export default function Chat() {
   const [onlinePeople, setOnlinePeople] = useState({});
   const [offlinePeople, setOfflinePeople] = useState({});
   const [selectedUserId, setSelectedUserId] = useState(null);
-  const { id } = useContext(UserContext);
+  const { id, username: ourUsername, setId, setUsername } = useContext(UserContext);
+
+  async function handleLogout() {
+    try {
+      await axios.post("/logout");
+    } catch (e) {}
+    websocket?.close();
+    setId(null);
+    setUsername(null);
+  }
   const [newMessageText, setNewMessageText] = useState("");
   const [messages, setMessages] = useState([]);
   const messagesEndRef = useRef(null);
@@ -51,7 +60,7 @@ export default function Chat() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, selectedUserId]);
 
   function showOnlinePeople(peopleArray) {
     const people = {};
@@ -92,107 +101,214 @@ export default function Chat() {
   const onlinePeopleExclOurUser = { ...onlinePeople };
   delete onlinePeopleExclOurUser[id];
 
+  const selectedName =
+    onlinePeopleExclOurUser[selectedUserId] || offlinePeople[selectedUserId];
+  const selectedIsOnline = !!onlinePeopleExclOurUser[selectedUserId];
+
+  const visibleMessages = messages.filter(
+    (m) =>
+      (m.sender === id && m.recipient === selectedUserId) ||
+      (m.sender === selectedUserId && m.recipient === id)
+  );
+
   return (
-    <div className="flex h-screen">
-      <div className="bg-white w-1/3 overflow-y-auto">
+    <div className="flex h-screen bg-ink-800 text-cream-50">
+      {/* Sidebar */}
+      <aside className="w-[320px] flex flex-col border-r border-ink-700">
         <Logo />
-        {Object.keys(onlinePeopleExclOurUser).map((p) => (
-          <ContactRow
-            key={p}
-            userId={p}
-            username={onlinePeopleExclOurUser[p]}
-            online={true}
-            selected={p === selectedUserId}
-            onClick={() => setSelectedUserId(p)}
-          />
-        ))}
-        {Object.keys(offlinePeople).map((p) => (
-          <ContactRow
-            key={p}
-            userId={p}
-            username={offlinePeople[p]}
-            online={false}
-            selected={p === selectedUserId}
-            onClick={() => setSelectedUserId(p)}
-          />
-        ))}
-      </div>
-      <div className="flex flex-col bg-blue-50 w-2/3 p-2">
-        <div className="flex-grow overflow-y-auto">
-          {!selectedUserId && (
-            <div className="flex h-full flex-grow items-center justify-center">
-              <div className="text-gray-300">&larr; Select a person </div>
-            </div>
-          )}
-          {selectedUserId && (
-            <div className="flex flex-col gap-2 p-2">
-              {messages
-                .filter(
-                  (m) =>
-                    (m.sender === id && m.recipient === selectedUserId) ||
-                    (m.sender === selectedUserId && m.recipient === id)
-                )
-                .map((m) => (
-                  <div
-                    key={m._id}
-                    className={
-                      "max-w-[70%] p-2 rounded-md " +
-                      (m.sender === id
-                        ? "bg-blue-500 text-white self-end"
-                        : "bg-white text-gray-700 self-start")
-                    }
-                  >
-                    {m.text}
-                  </div>
-                ))}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
+
+        <div className="px-6 mt-2 mb-3 text-[10px] tracking-editorial uppercase text-muted">
+          Correspondents&nbsp;·&nbsp;
+          <span className="text-cream-200">
+            {Object.keys(onlinePeopleExclOurUser).length} online
+          </span>
         </div>
-        {selectedUserId && (
-          <form onSubmit={sendMessage} className="flex gap-2 rounded-sm">
-            <input
-              type="text"
-              value={newMessageText}
-              onChange={(e) => setNewMessageText(e.target.value)}
-              className="bg-white border p-2 flex-grow rounded-sm"
-              placeholder="Type your message ..."
+
+        <div className="flex-1 overflow-y-auto pb-6">
+          {Object.keys(onlinePeopleExclOurUser).map((p) => (
+            <ContactRow
+              key={p}
+              userId={p}
+              username={onlinePeopleExclOurUser[p]}
+              online={true}
+              selected={p === selectedUserId}
+              onClick={() => setSelectedUserId(p)}
             />
-            <button
-              type="submit"
-              className="bg-blue-500 p-2 text-white rounded-sm flex items-center justify-center"
-            >
-              <BsSendFill />
-            </button>
-          </form>
+          ))}
+          {Object.keys(offlinePeople).length > 0 && (
+            <div className="px-6 mt-6 mb-2 text-[10px] tracking-editorial uppercase text-muted">
+              Quiet
+            </div>
+          )}
+          {Object.keys(offlinePeople).map((p) => (
+            <ContactRow
+              key={p}
+              userId={p}
+              username={offlinePeople[p]}
+              online={false}
+              selected={p === selectedUserId}
+              onClick={() => setSelectedUserId(p)}
+            />
+          ))}
+        </div>
+
+        <div className="border-t border-ink-700 px-6 py-4 flex items-center gap-3">
+          <Avatar username={ourUsername || "?"} userId={id || "0"} />
+          <div className="flex-1 min-w-0">
+            <div className="font-display text-[15px] leading-tight truncate">
+              {ourUsername}
+            </div>
+            <div className="text-[10px] tracking-editorial uppercase text-muted">
+              You — Online
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            title="Sign out"
+            className="group flex items-center gap-1.5 text-[10px] tracking-editorial uppercase text-muted hover:text-ember-400 transition-colors"
+          >
+            Sign out
+            <BsBoxArrowRight className="text-sm group-hover:translate-x-0.5 transition-transform" />
+          </button>
+        </div>
+      </aside>
+
+      {/* Conversation */}
+      <main className="flex-1 flex flex-col relative grain">
+        {!selectedUserId && (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
+            <div className="text-[10px] tracking-editorial uppercase text-muted mb-5">
+              No correspondent selected
+            </div>
+            <div className="font-display italic text-[44px] leading-tight tracking-tight max-w-[18ch] text-cream-100">
+              Pick a name to begin a letter.
+            </div>
+            <div className="mt-6 text-muted max-w-md leading-relaxed">
+              Conversations live forever. They survive refreshes, reboots, and
+              rainy weekends.
+            </div>
+          </div>
         )}
-      </div>
+
+        {selectedUserId && (
+          <>
+            <header className="px-10 pt-8 pb-6 border-b border-ink-700 flex items-end justify-between">
+              <div>
+                <div className="text-[10px] tracking-editorial uppercase text-muted mb-1">
+                  In conversation with
+                </div>
+                <div className="font-display text-[34px] leading-none tracking-tight">
+                  {selectedName || "Unknown"}
+                </div>
+              </div>
+              <div className="text-[10px] tracking-editorial uppercase text-muted flex items-center gap-2">
+                {selectedIsOnline ? (
+                  <>
+                    <span className="w-1.5 h-1.5 bg-ember-400 ember-pulse" />
+                    Currently writing
+                  </>
+                ) : (
+                  <>
+                    <span className="w-1.5 h-1.5 bg-ink-500" />
+                    Away
+                  </>
+                )}
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-y-auto px-10 py-8">
+              <div className="flex flex-col gap-3 max-w-3xl mx-auto">
+                {visibleMessages.map((m, i) => {
+                  const mine = m.sender === id;
+                  const prev = visibleMessages[i - 1];
+                  const continuing = prev && prev.sender === m.sender;
+                  return (
+                    <div
+                      key={m._id}
+                      className={
+                        "max-w-[68%] px-4 py-3 text-[15px] leading-snug rise " +
+                        (mine
+                          ? "self-end bg-ember-400 text-ink-900 rounded-[2px]"
+                          : "self-start bg-ink-700 text-cream-50 rounded-[2px] border border-ink-600")
+                      }
+                      style={{
+                        marginTop: continuing ? "-4px" : "8px",
+                      }}
+                    >
+                      {m.text}
+                    </div>
+                  );
+                })}
+                {visibleMessages.length === 0 && (
+                  <div className="self-center text-muted text-sm font-display italic mt-12">
+                    — no letters yet. say something.
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            <form
+              onSubmit={sendMessage}
+              className="border-t border-ink-700 px-10 py-5 flex items-center gap-4 max-w-5xl mx-auto w-full"
+            >
+              <input
+                type="text"
+                value={newMessageText}
+                onChange={(e) => setNewMessageText(e.target.value)}
+                placeholder="Write a letter…"
+                className="flex-1 bg-transparent outline-none text-[17px] font-display placeholder:text-ink-400 placeholder:italic py-2 border-b border-ink-700 focus:border-ember-400 transition-colors"
+              />
+              <button
+                type="submit"
+                className="group flex items-center gap-2 text-[10px] tracking-editorial uppercase text-muted hover:text-ember-400 transition-colors"
+              >
+                Send
+                <BsArrowRight className="text-base group-hover:translate-x-1 transition-transform" />
+              </button>
+            </form>
+          </>
+        )}
+      </main>
     </div>
   );
 }
 
 function ContactRow({ userId, username, online, selected, onClick }) {
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
       className={
-        "border-b border-gray-100 flex items-center gap-2 cursor-pointer " +
-        (selected ? "bg-blue-50" : "")
+        "w-full text-left px-6 py-3 flex items-center gap-3 transition-colors group " +
+        (selected
+          ? "bg-ink-700"
+          : "hover:bg-ink-700/50")
       }
     >
-      {selected && <div className="w-1 bg-blue-500 h-12 rounded-r-md"></div>}
-      <div className="flex gap-2 py-2 pl-4 items-center">
-        <div className="relative">
-          <Avatar username={username} userId={userId} />
-          <span
-            className={
-              "absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white " +
-              (online ? "bg-green-400" : "bg-gray-300")
-            }
-          ></span>
-        </div>
-        <span className="text-gray-700">{username}</span>
+      <div className="relative">
+        <Avatar username={username} userId={userId} />
+        {online && (
+          <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-ember-400 ring-2 ring-ink-800" />
+        )}
       </div>
-    </div>
+      <div className="flex-1 min-w-0">
+        <div
+          className={
+            "font-display text-[16px] leading-tight truncate " +
+            (online ? "text-cream-50" : "text-cream-200/60")
+          }
+        >
+          {username}
+        </div>
+        <div className="text-[10px] tracking-editorial uppercase text-muted mt-0.5">
+          {online ? "Online" : "Last seen recently"}
+        </div>
+      </div>
+      {selected && (
+        <div className="w-1 h-8 bg-ember-400" />
+      )}
+    </button>
   );
 }
