@@ -1,6 +1,6 @@
 import { useEffect, useState, useContext, useRef } from "react";
 import axios from "axios";
-import SendRoundedIcon from "@mui/icons-material/SendRounded";
+import { BsSendFill } from "react-icons/bs";
 import Logo from "./Logo";
 import Avatar from "./avatar";
 import { UserContext } from "./UserContext";
@@ -14,6 +14,11 @@ export default function Chat() {
   const [newMessageText, setNewMessageText] = useState("");
   const [messages, setMessages] = useState([]);
   const messagesEndRef = useRef(null);
+  const idRef = useRef(null);
+
+  useEffect(() => {
+    idRef.current = id;
+  }, [id]);
 
   useEffect(() => {
     const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:4000";
@@ -61,6 +66,7 @@ export default function Chat() {
     if ("online" in messageData) {
       showOnlinePeople(messageData.online);
     } else if ("text" in messageData) {
+      if (messageData.sender === idRef.current) return;
       setMessages((prev) => [...prev, messageData]);
     }
   }
@@ -120,19 +126,25 @@ export default function Chat() {
           )}
           {selectedUserId && (
             <div className="flex flex-col gap-2 p-2">
-              {messages.map((m) => (
-                <div
-                  key={m._id}
-                  className={
-                    "max-w-[70%] p-2 rounded-md " +
-                    (m.sender === id
-                      ? "bg-blue-500 text-white self-end"
-                      : "bg-white text-gray-700 self-start")
-                  }
-                >
-                  {m.text}
-                </div>
-              ))}
+              {messages
+                .filter(
+                  (m) =>
+                    (m.sender === id && m.recipient === selectedUserId) ||
+                    (m.sender === selectedUserId && m.recipient === id)
+                )
+                .map((m) => (
+                  <div
+                    key={m._id}
+                    className={
+                      "max-w-[70%] p-2 rounded-md " +
+                      (m.sender === id
+                        ? "bg-blue-500 text-white self-end"
+                        : "bg-white text-gray-700 self-start")
+                    }
+                  >
+                    {m.text}
+                  </div>
+                ))}
               <div ref={messagesEndRef} />
             </div>
           )}
@@ -148,9 +160,9 @@ export default function Chat() {
             />
             <button
               type="submit"
-              className="bg-blue-500 p-2 text-white rounded-sm"
+              className="bg-blue-500 p-2 text-white rounded-sm flex items-center justify-center"
             >
-              <SendRoundedIcon />
+              <BsSendFill />
             </button>
           </form>
         )}
