@@ -1,4 +1,10 @@
 node_modules
 .env
+.env*.local
 .DS_Store
 CLAUDE.md
+INTERVIEW_PREP.md
+DEPLOY_SETUP.md
+DEPLOY.md
+LOCAL_SETUP.md
+docs/

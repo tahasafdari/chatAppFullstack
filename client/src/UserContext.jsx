@@ -9,10 +9,15 @@ export function UserContextProvider({ children }) {
   const [id, setId] = useState(null);
 
   useEffect(() => {
-    axios.get("/profile").then((res) => {
-      setId(res.data.userId);
-      setUsername(res.data.username);
-    });
+    axios
+      .get("/profile")
+      .then((res) => {
+        setId(res.data.userId);
+        setUsername(res.data.username);
+      })
+      .catch(() => {
+        // No valid session cookie — user is logged out. This is expected on first load.
+      });
   }, []);
 
   return (

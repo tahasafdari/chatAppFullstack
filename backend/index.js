@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
 const User = require("./models/User");
+const Message = require("./models/Message");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const ws = require("ws");
@@ -13,20 +14,44 @@ dotenv.config();
 
 mongoose.connect(process.env.MONGO_URL);
 const jwtSecret = process.env.JWT_SECRET;
-const bcryptSalt = bcrypt.genSaltSync(10);
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
+const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
     credentials: true,
-    origin: process.env.CLIENT_URL,
+    origin: function (origin, cb) {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("CORS: origin not allowed: " + origin));
+    },
   })
 );
 
-app.get("/", (req, res) => {});
+function cookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+  return isProd
+    ? { httpOnly: true, sameSite: "none", secure: true, path: "/" }
+    : { httpOnly: true, sameSite: "lax", secure: false, path: "/" };
+}
+
+async function getUserDataFromRequest(req) {
+  return new Promise((resolve, reject) => {
+    const token = req.cookies?.token;
+    if (!token) return reject(new Error("no token"));
+    jwt.verify(token, jwtSecret, {}, (err, userData) => {
+      if (err) return reject(err);
+      resolve(userData);
+    });
+  });
+}
 
 app.get("/test", (req, res) => {
   res.json("test ok!");
@@ -34,42 +59,50 @@ app.get("/test", (req, res) => {
 
 app.get("/profile", (req, res) => {
   const token = req.cookies?.token;
-  if (token) {
-    jwt.verify(token, jwtSecret, {}, (err, userData) => {
-      if (err) {
-        throw err;
-      }
-      res.json(userData);
-    });
-  } else {
-    res.status(401).json("no token");
-  }
+  if (!token) return res.status(401).json("no token");
+  jwt.verify(token, jwtSecret, {}, (err, userData) => {
+    if (err) return res.status(401).json("invalid token");
+    res.json(userData);
+  });
 });
 
 app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-  const foundUser = await User.findOne({ username });
-  if (foundUser) {
-    const correctPassword = bcrypt.compareSync(password, foundUser.password);
-    if (correctPassword) {
-      jwt.sign(
-        { userId: foundUser._id, username },
-        jwtSecret,
-        {},
-        (err, token) => {
-          res
-            .cookie("token", token, { sameSite: "none", secure: true })
-            .json({ id: foundUser._id });
-        }
-      );
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: "username and password required" });
     }
+    const foundUser = await User.findOne({ username });
+    if (!foundUser) {
+      return res.status(401).json({ error: "invalid credentials" });
+    }
+    const correctPassword = bcrypt.compareSync(password, foundUser.password);
+    if (!correctPassword) {
+      return res.status(401).json({ error: "invalid credentials" });
+    }
+    jwt.sign(
+      { userId: foundUser._id, username },
+      jwtSecret,
+      {},
+      (err, token) => {
+        if (err) return res.status(500).json({ error: "token sign failed" });
+        res
+          .cookie("token", token, cookieOptions())
+          .json({ id: foundUser._id });
+      }
+    );
+  } catch (e) {
+    res.status(500).json({ error: "login failed" });
   }
 });
 
 app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
   try {
-    const hashedPassword = bcrypt.hashSync(password, bcryptSalt);
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: "username and password required" });
+    }
+    const hashedPassword = bcrypt.hashSync(password, 10);
     const createdUser = await User.create({
       username: username,
       password: hashedPassword,
@@ -79,53 +112,117 @@ app.post("/register", async (req, res) => {
       jwtSecret,
       {},
       (err, token) => {
-        if (err) throw err;
+        if (err) return res.status(500).json({ error: "token sign failed" });
         res
-          .cookie("token", token, { sameSite: "none", secure: true })
+          .cookie("token", token, cookieOptions())
           .status(201)
-          .json({
-            id: createdUser._id,
-          });
+          .json({ id: createdUser._id });
       }
     );
   } catch (error) {
-    if (error) throw error;
-    res.status(500).json("error");
+    if (error?.code === 11000) {
+      return res.status(409).json({ error: "username already taken" });
+    }
+    res.status(500).json({ error: "registration failed" });
   }
 });
 
-const server = app.listen(4000);
+app.post("/logout", (req, res) => {
+  res
+    .cookie("token", "", { ...cookieOptions(), maxAge: 0 })
+    .json({ ok: true });
+});
+
+app.get("/people", async (req, res) => {
+  const users = await User.find({}, { _id: 1, username: 1 });
+  res.json(users);
+});
+
+app.get("/messages/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userData = await getUserDataFromRequest(req);
+    const ourUserId = userData.userId;
+    const messages = await Message.find({
+      sender: { $in: [userId, ourUserId] },
+      recipient: { $in: [userId, ourUserId] },
+    }).sort({ createdAt: 1 });
+    res.json(messages);
+  } catch (e) {
+    res.status(401).json("unauthorized");
+  }
+});
+
+const server = app.listen(process.env.PORT || 4000);
 
 /* -------------------------------- websockets -------------------------------- */
 
 const wss = new ws.WebSocketServer({ server });
+
+function broadcastOnline() {
+  const openClients = [...wss.clients].filter((c) => c.readyState === 1);
+  const onlineList = openClients
+    .filter((c) => c.userId)
+    .map((c) => ({ userId: c.userId, username: c.username }));
+  const payload = JSON.stringify({ online: onlineList });
+  openClients.forEach((c) => {
+    try {
+      c.send(payload);
+    } catch (e) {}
+  });
+}
+
 wss.on("connection", (connection, req) => {
   const cookies = req.headers.cookie;
   if (cookies) {
     const tokenCookieString = cookies
       .split(";")
-      .find((cookie) => cookie.startsWith("token"));
+      .find((cookie) => cookie.trim().startsWith("token"));
     if (tokenCookieString) {
       const token = tokenCookieString.split("=")[1];
       if (token) {
-        jwt.verify(token, jwtSecret, {}, (err, userData) => {
-          if (err) throw err;
-          const { userId, username } = userData;
-          connection.userId = userId;
-          connection.username = username;
-        });
+        try {
+          const userData = jwt.verify(token, jwtSecret);
+          connection.userId = userData.userId;
+          connection.username = userData.username;
+        } catch (e) {}
       }
     }
   }
 
-  [...wss.clients].forEach((client) => {
-    client.send(
-      JSON.stringify({
-        online: [...wss.clients].map((c) => ({
-          userId: c.userId,
-          username: c.username,
-        })),
-      })
-    );
+  connection.on("message", async (rawData) => {
+    try {
+      const messageData = JSON.parse(rawData.toString());
+      const { recipient, text } = messageData;
+      if (!recipient || !text || !connection.userId) return;
+      const messageDoc = await Message.create({
+        sender: connection.userId,
+        recipient,
+        text,
+      });
+      [...wss.clients]
+        .filter((c) => c.readyState === 1)
+        .filter((c) => c.userId === recipient || c.userId === connection.userId)
+        .forEach((c) => {
+          try {
+            c.send(
+              JSON.stringify({
+                text,
+                sender: connection.userId,
+                recipient,
+                _id: messageDoc._id,
+              })
+            );
+          } catch (e) {}
+        });
+    } catch (e) {
+      console.error("ws message error", e);
+    }
   });
+
+  connection.on("close", () => {
+    broadcastOnline();
+  });
+
+  broadcastOnline();
 });
