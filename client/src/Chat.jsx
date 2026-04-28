@@ -1,6 +1,6 @@
 import { useEffect, useState, useContext, useRef } from "react";
 import axios from "axios";
-import { BsArrowRight, BsBoxArrowRight } from "react-icons/bs";
+import { BsArrowRight, BsBoxArrowRight, BsBell, BsBellFill } from "react-icons/bs";
 import Logo from "./Logo";
 import Avatar from "./avatar";
 import { UserContext } from "./UserContext";
@@ -11,6 +11,31 @@ export default function Chat() {
   const [offlinePeople, setOfflinePeople] = useState({});
   const [selectedUserId, setSelectedUserId] = useState(null);
   const { id, username: ourUsername, setId, setUsername } = useContext(UserContext);
+  const [newMessageText, setNewMessageText] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [unread, setUnread] = useState({});
+  const [toasts, setToasts] = useState([]);
+  const messagesEndRef = useRef(null);
+  const idRef = useRef(null);
+  const selectedUserIdRef = useRef(null);
+  const onlinePeopleRef = useRef({});
+  const offlinePeopleRef = useRef({});
+
+  useEffect(() => {
+    idRef.current = id;
+  }, [id]);
+
+  useEffect(() => {
+    selectedUserIdRef.current = selectedUserId;
+  }, [selectedUserId]);
+
+  useEffect(() => {
+    onlinePeopleRef.current = onlinePeople;
+  }, [onlinePeople]);
+
+  useEffect(() => {
+    offlinePeopleRef.current = offlinePeople;
+  }, [offlinePeople]);
 
   async function handleLogout() {
     try {
@@ -20,14 +45,6 @@ export default function Chat() {
     setId(null);
     setUsername(null);
   }
-  const [newMessageText, setNewMessageText] = useState("");
-  const [messages, setMessages] = useState([]);
-  const messagesEndRef = useRef(null);
-  const idRef = useRef(null);
-
-  useEffect(() => {
-    idRef.current = id;
-  }, [id]);
 
   useEffect(() => {
     const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:4000";
@@ -70,6 +87,27 @@ export default function Chat() {
     setOnlinePeople(people);
   }
 
+  function pushToast(toast) {
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== toast.id));
+    }, 4500);
+  }
+
+  function dismissToast(toastId) {
+    setToasts((prev) => prev.filter((t) => t.id !== toastId));
+  }
+
+  function selectContact(contactId) {
+    setSelectedUserId(contactId);
+    setUnread((prev) => {
+      if (!prev[contactId]) return prev;
+      const next = { ...prev };
+      delete next[contactId];
+      return next;
+    });
+  }
+
   function handleMessage(event) {
     const messageData = JSON.parse(event.data);
     if ("online" in messageData) {
@@ -77,6 +115,26 @@ export default function Chat() {
     } else if ("text" in messageData) {
       if (messageData.sender === idRef.current) return;
       setMessages((prev) => [...prev, messageData]);
+
+      if (messageData.sender !== selectedUserIdRef.current) {
+        setUnread((prev) => ({
+          ...prev,
+          [messageData.sender]: (prev[messageData.sender] || 0) + 1,
+        }));
+        const senderName =
+          onlinePeopleRef.current[messageData.sender] ||
+          offlinePeopleRef.current[messageData.sender] ||
+          "Someone";
+        pushToast({
+          id:
+            (messageData._id ? String(messageData._id) : "t") +
+            "-" +
+            Date.now(),
+          contactId: messageData.sender,
+          senderName,
+          text: messageData.text,
+        });
+      }
     }
   }
 
@@ -111,6 +169,8 @@ export default function Chat() {
       (m.sender === selectedUserId && m.recipient === id)
   );
 
+  const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0);
+
   return (
     <div className="flex h-screen bg-ink-800 text-cream-50">
       {/* Sidebar */}
@@ -132,7 +192,8 @@ export default function Chat() {
               username={onlinePeopleExclOurUser[p]}
               online={true}
               selected={p === selectedUserId}
-              onClick={() => setSelectedUserId(p)}
+              unread={unread[p] || 0}
+              onClick={() => selectContact(p)}
             />
           ))}
           {Object.keys(offlinePeople).length > 0 && (
@@ -147,7 +208,8 @@ export default function Chat() {
               username={offlinePeople[p]}
               online={false}
               selected={p === selectedUserId}
-              onClick={() => setSelectedUserId(p)}
+              unread={unread[p] || 0}
+              onClick={() => selectContact(p)}
             />
           ))}
         </div>
@@ -176,6 +238,22 @@ export default function Chat() {
 
       {/* Conversation */}
       <main className="flex-1 flex flex-col relative grain">
+        {/* Bell */}
+        <div className="absolute top-6 right-8 z-30 flex items-center gap-3">
+          {totalUnread > 0 && (
+            <span className="text-[10px] tracking-editorial uppercase text-ember-400 rise">
+              {totalUnread} new
+            </span>
+          )}
+          <div className="relative">
+            {totalUnread > 0 ? (
+              <BsBellFill className="text-ember-400 text-lg ember-pulse" />
+            ) : (
+              <BsBell className="text-muted text-lg" />
+            )}
+          </div>
+        </div>
+
         {!selectedUserId && (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
             <div className="text-[10px] tracking-editorial uppercase text-muted mb-5">
@@ -193,7 +271,7 @@ export default function Chat() {
 
         {selectedUserId && (
           <>
-            <header className="px-10 pt-8 pb-6 border-b border-ink-700 flex items-end justify-between">
+            <header className="px-10 pt-8 pb-6 border-b border-ink-700 flex items-end justify-between pr-32">
               <div>
                 <div className="text-[10px] tracking-editorial uppercase text-muted mb-1">
                   In conversation with
@@ -270,21 +348,44 @@ export default function Chat() {
             </form>
           </>
         )}
+
+        {/* Toasts */}
+        <div className="fixed top-20 right-6 z-40 flex flex-col gap-3 w-[320px] pointer-events-none">
+          {toasts.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => {
+                selectContact(t.contactId);
+                dismissToast(t.id);
+              }}
+              className="pointer-events-auto text-left bg-ink-700/95 backdrop-blur border border-ink-600 hover:border-ember-400 px-4 py-3 shadow-2xl rise transition-colors group"
+            >
+              <div className="text-[10px] tracking-editorial uppercase text-muted mb-1 flex items-center justify-between">
+                <span>New letter from {t.senderName}</span>
+                <span className="text-ember-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                  Open →
+                </span>
+              </div>
+              <div className="font-display text-[15px] text-cream-50 leading-snug line-clamp-2">
+                {t.text}
+              </div>
+            </button>
+          ))}
+        </div>
       </main>
     </div>
   );
 }
 
-function ContactRow({ userId, username, online, selected, onClick }) {
+function ContactRow({ userId, username, online, selected, unread, onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={
         "w-full text-left px-6 py-3 flex items-center gap-3 transition-colors group " +
-        (selected
-          ? "bg-ink-700"
-          : "hover:bg-ink-700/50")
+        (selected ? "bg-ink-700" : "hover:bg-ink-700/50")
       }
     >
       <div className="relative">
@@ -306,9 +407,12 @@ function ContactRow({ userId, username, online, selected, onClick }) {
           {online ? "Online" : "Last seen recently"}
         </div>
       </div>
-      {selected && (
-        <div className="w-1 h-8 bg-ember-400" />
+      {unread > 0 && (
+        <span className="font-display text-[13px] text-ember-400 ember-pulse">
+          {unread}
+        </span>
       )}
+      {selected && <div className="w-1 h-8 bg-ember-400" />}
     </button>
   );
 }
